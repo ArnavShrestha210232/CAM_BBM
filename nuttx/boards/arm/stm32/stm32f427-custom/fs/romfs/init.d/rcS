@@ -1,0 +1,8 @@
+#!/bin/sh
+
+echo "Boot script started"
+
+camera_MSN2 &
+hello &
+
+echo "Apps launched"

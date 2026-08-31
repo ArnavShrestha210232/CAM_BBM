@@ -1,0 +1,12 @@
+.vscode/
+build/
+*.o
+*.elf
+*.bin
+*.map
+*.swp
+.DS_Store
+
+
+
+

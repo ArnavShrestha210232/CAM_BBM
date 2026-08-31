@@ -1,0 +1,32 @@
+
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+config EXAMPLES_CAMERA_LAUNCHER
+	tristate "\CAMERA_LAUNCHER example"
+	default n
+	---help---
+		Enable the \"Camera MSN2\" example
+
+if EXAMPLES_CAMERA_LAUNCHER
+
+config EXAMPLES_CAMERA_LAUNCHER_PROGNAME
+	string "Program name"
+	default "CAMERA_LAUNCHER"
+	---help---
+		This is the name of the program that will be used when the NSH ELF
+		program is installed.
+
+config EXAMPLES_CAMERA_LAUNCHER_PRIORITY
+	int "CAMERA_LAUNCHER task priority"
+	default 100
+
+config EXAMPLES_CAMERA_LAUNCHER_STACKSIZE
+	int "CAMERA_LAUNCHER stack size"
+	default DEFAULT_TASK_STACKSIZE
+
+endif
+
+

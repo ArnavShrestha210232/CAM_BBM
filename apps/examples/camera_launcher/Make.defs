@@ -1,0 +1,3 @@
+ifneq ($(CONFIG_EXAMPLES_CAMERA_LAUNCHER),)
+CONFIGURED_APPS += $(APPDIR)/examples/camera_launcher
+endif

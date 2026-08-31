@@ -1,0 +1,29 @@
+#
+# For a description of the syntax of this configuration file,
+# see the file kconfig-language.txt in the NuttX tools repository.
+#
+
+config EXAMPLES_BASIC
+	tristate "\"Basic, World!\" example"
+	default n
+	---help---
+		Enable the \"Basic, World!\" example
+
+if EXAMPLES_BASIC
+
+config EXAMPLES_BASIC_PROGNAME
+	string "Program name"
+	default "basic"
+	---help---
+		This is the name of the program that will be used when the NSH ELF
+		program is installed.
+
+config EXAMPLES_BASIC_PRIORITY
+	int "basic task priority"
+	default 100
+
+config EXAMPLES_BASIC_STACKSIZE
+	int "Basic stack size"
+	default DEFAULT_TASK_STACKSIZE
+
+endif
