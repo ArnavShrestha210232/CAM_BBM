@@ -15,6 +15,9 @@ struct spi_dev_s;
 extern struct spi_dev_s *stm32_spibus_initialize(int bus);
 
 #include "ring_buffer.h"
+#include <semaphore.h>
+
+static sem_t g_subscriber_done_sem;
 
 #define SPI_FREQ        4000000
 #define SPI_MODE        SPIDEV_MODE0
@@ -23,7 +26,7 @@ extern struct spi_dev_s *stm32_spibus_initialize(int bus);
 #define CMD_CAPTURE     0x02
 #define ACK_BYTE        0xAA
 
-#define IMG_BUF_SIZE    (40000u)
+#define IMG_BUF_SIZE    (16000u)
 #define SPI_XFER_SIZE   CHUNK_SIZE
 #define SPI_SYNC_BYTES  (1024u)
 #define META_BUF_SIZE   (128u)
@@ -186,7 +189,8 @@ static int spi_read_image(camera_ctx_t *ctx, struct spi_dev_s *spi_dev, uint32_t
 
     return 0;
 }
-
+static uint8_t g_cam1_img_buf[IMG_BUF_SIZE];
+static uint8_t g_cam2_img_buf[IMG_BUF_SIZE];
 static void *camera_worker_thread(void *arg)
 {
     camera_ctx_t *ctx = (camera_ctx_t *)arg;
@@ -195,12 +199,12 @@ static void *camera_worker_thread(void *arg)
 
     fprintf(stderr, "\n[CAM %d] Worker thread started\n", id);
 
-    ctx->image_buf = (uint8_t *)malloc(IMG_BUF_SIZE);
-    if (!ctx->image_buf)
-    {
-        fprintf(stderr, "[CAM %d] Memory allocation failed\n", id);
-        return NULL;
-    }
+    // ctx->image_buf = (uint8_t *)malloc(IMG_BUF_SIZE);
+    // if (!ctx->image_buf)
+    // {
+    //     fprintf(stderr, "[CAM %d] Memory allocation failed\n", id);
+    //     return NULL;
+    // }
 
     int uart_fd = open(ctx->uart_dev, O_RDWR | O_NOCTTY | O_NONBLOCK);
     if (uart_fd < 0)
@@ -363,28 +367,78 @@ static void *camera_worker_thread(void *arg)
     fprintf(stderr, "[CAM %d] all %lu chunks pushed — DONE\n", id, (unsigned long)total);
 
     close(uart_fd);
-    free(ctx->image_buf);
+    // free(ctx->image_buf);
     return NULL;
 }
+void *ring_buffer_subscriber_task(void *arg)
+{
+    struct image_chunk_s chunk;
 
+    for (int cam = 0; cam < 2; cam++)
+    {
+        int byte_count = 0;
+        while (1)
+        {
+            pthread_mutex_lock(&g_rb_mutex);
+            int res = rb_read(cam, &chunk);
+            pthread_mutex_unlock(&g_rb_mutex);
+
+            if (res == 0)
+            {
+                if (chunk.is_meta)
+                {
+                    fprintf(stderr, "\n[CAM %d META] %.*s\n\n", cam + 1, chunk.len, chunk.data);
+                    fprintf(stderr, "[CAM %d FULL JPEG HEX]:\n", cam + 1);
+                }
+                else
+                {
+                    for (uint16_t i = 0; i < chunk.len; i++)
+                    {
+                        fprintf(stderr, "%02X ", chunk.data[i]);
+                        byte_count++;
+                        if (byte_count % 16 == 0)
+                        {
+                            fprintf(stderr, "\n");
+                        }
+                    }
+
+                    if (chunk.is_last)
+                    {
+                        fprintf(stderr, "\n\n");
+                        fflush(stderr);
+                        sem_post(&g_subscriber_done_sem);
+                        break;
+                    }
+                }
+            }
+            else
+            {
+                usleep(1000);
+            }
+        }
+    }
+
+    return NULL;
+}
 int camera_MSN2_main(int argc, char *argv[])
 {
     fprintf(stderr, "\n================ DUAL CAMERA MSN2 START ================\n");
-
+    sem_init(&g_subscriber_done_sem, 0, 0);
     rb_init();
-
+    pthread_t sub_thread;
+    pthread_create(&sub_thread, NULL, ring_buffer_subscriber_task, NULL);
     camera_ctx_t cam1_ctx = {
         .camera_id = 1,
         .uart_dev  = "/dev/ttyS2",
         .spi_bus   = 3,
-        .image_buf = NULL
+        .image_buf = g_cam1_img_buf
     };
 
     camera_ctx_t cam2_ctx = {
         .camera_id = 2,
         .uart_dev  = "/dev/ttyS3",
         .spi_bus   = 4,
-        .image_buf = NULL
+        .image_buf = g_cam2_img_buf
     };
 
     pthread_t thread1, thread2;
@@ -404,6 +458,14 @@ int camera_MSN2_main(int argc, char *argv[])
     if (ret1 == 0) pthread_join(thread1, NULL);
     if (ret2 == 0) pthread_join(thread2, NULL);
 
+    // fprintf(stderr, "\n================ DUAL CAMERA MSN2 DONE ================\n");
+// 2. Wait for the subscriber task to finish dumping all hex data from ring buffer
+// Wait for both camera dumps to complete:
+    sem_wait(&g_subscriber_done_sem); // Camera 1 finished dumping
+    sem_wait(&g_subscriber_done_sem); // Camera 2 finished dumping
+    // 3. Print DONE banner strictly after subscriber output finishes
     fprintf(stderr, "\n================ DUAL CAMERA MSN2 DONE ================\n");
+
+    sem_destroy(&g_subscriber_done_sem);
     return 0;
 }
