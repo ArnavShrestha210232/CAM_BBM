@@ -1,0 +1,343 @@
+import sensor
+import image
+import time
+import pyb
+
+# ============================================================
+# Hardware
+# ============================================================
+
+uart = pyb.UART(3, 115200, timeout=100, timeout_char=100)
+
+spi = pyb.SPI(
+    2,
+    pyb.SPI.SLAVE,
+    polarity=0,
+    phase=0,
+    bits=8
+)
+
+# SPI pins must correspond to SPI3 on your OpenMV board.
+# SPI3:
+#   SCK
+#   MOSI
+#   MISO
+#   NSS / CS
+#
+# The OpenMV SPI object is configured as SLAVE.
+
+# ============================================================
+# Protocol
+# ============================================================
+
+CMD_HANDSHAKE = 0x01
+CMD_CAPTURE   = 0x02
+ACK_BYTE      = 0xAA
+
+SPI_SYNC_BYTES = 1024
+
+# ============================================================
+# Camera configuration
+# ============================================================
+
+sensor.reset()
+
+sensor.set_pixformat(sensor.RGB565)
+sensor.set_framesize(sensor.QVGA)       # 320 x 240
+
+sensor.skip_frames(time=2000)
+
+# Optional JPEG quality
+JPEG_QUALITY = 60
+
+print("")
+print("================ OPENMV CAMERA ================")
+print("UART : 115200 8N1")
+print("SPI  : SPI3 SLAVE MODE0")
+print("Image: 320x240 JPEG")
+print("")
+
+
+# ============================================================
+# UART helper
+# ============================================================
+
+def send_u32_le(value):
+    uart.write(bytes((
+        value & 0xFF,
+        (value >> 8) & 0xFF,
+        (value >> 16) & 0xFF,
+        (value >> 24) & 0xFF
+    )))
+
+
+def send_u16_le(value):
+    uart.write(bytes((
+        value & 0xFF,
+        (value >> 8) & 0xFF
+    )))
+
+
+# ============================================================
+# SPI helper
+# ============================================================
+
+def spi_send_bytes(data):
+    """
+    Send bytes to NuttX through SPI slave.
+
+    NuttX generates the SPI clock, so OpenMV cannot simply
+    'transmit' unless NuttX is actively clocking the bus.
+    """
+
+    spi.send(data)
+
+
+# ============================================================
+# Handshake
+# ============================================================
+
+def wait_for_handshake():
+
+    print("[OPENMV] Waiting for handshake...")
+
+    while True:
+
+        if uart.any():
+
+            cmd = uart.read(1)
+
+            if cmd is not None and len(cmd) == 1:
+
+                value = cmd[0]
+
+                if value == CMD_HANDSHAKE:
+
+                    print("[OPENMV] HANDSHAKE received")
+
+                    uart.write(bytes([ACK_BYTE]))
+
+                    print("[OPENMV] HANDSHAKE ACK sent")
+
+                    return
+
+
+# ============================================================
+# Capture command
+# ============================================================
+
+def wait_for_capture():
+
+    print("[OPENMV] Waiting for CMD_CAPTURE...")
+
+    while True:
+
+        if uart.any():
+
+            cmd = uart.read(1)
+
+            if cmd is not None and len(cmd) == 1:
+
+                value = cmd[0]
+
+                if value == CMD_CAPTURE:
+
+                    print("[OPENMV] CMD_CAPTURE received")
+
+                    return
+
+
+# ============================================================
+# Capture JPEG
+# ============================================================
+
+def capture_jpeg():
+
+    print("[OPENMV] Capturing image...")
+
+    img = sensor.snapshot()
+
+    # Compress image to JPEG
+    jpeg = img.compress(
+        quality=JPEG_QUALITY
+    )
+
+    jpeg_bytes = jpeg.bytearray()
+
+    print("[OPENMV] JPEG captured")
+    print("[OPENMV] JPEG size =", len(jpeg_bytes), "bytes")
+
+    return jpeg_bytes
+
+
+# ============================================================
+# Send capture information over UART
+# ============================================================
+
+def send_capture_info(jpeg_size):
+
+    metadata = b"IMG_READY"
+
+    print("[OPENMV] Sending ACK")
+
+    # --------------------------------------------------------
+    # ACK
+    # --------------------------------------------------------
+
+    uart.write(bytes([ACK_BYTE]))
+
+    # --------------------------------------------------------
+    # JPEG size - 4 bytes LITTLE ENDIAN
+    # --------------------------------------------------------
+
+    print("[OPENMV] Sending JPEG size:", jpeg_size)
+
+    send_u32_le(jpeg_size)
+
+    # --------------------------------------------------------
+    # Metadata length - 2 bytes LITTLE ENDIAN
+    # --------------------------------------------------------
+
+    meta_len = len(metadata)
+
+    print("[OPENMV] Sending metadata length:", meta_len)
+
+    send_u16_le(meta_len)
+
+    # --------------------------------------------------------
+    # Metadata
+    # --------------------------------------------------------
+
+    print("[OPENMV] Sending metadata:", metadata)
+
+    uart.write(metadata)
+
+    # Make sure UART transmission has time to complete
+    pyb.delay(1)
+
+
+# ============================================================
+# SPI transfer
+# ============================================================
+
+def send_image_spi(jpeg_bytes):
+
+    print("")
+    print("========== SPI TRANSFER START ==========")
+
+    # --------------------------------------------------------
+    # NuttX waits 25 ms.
+    #
+    # OpenMV waits 30 ms after UART information.
+    #
+    # This gives NuttX time to receive:
+    #
+    #   ACK
+    #   JPEG size
+    #   metadata length
+    #   metadata
+    #
+    # and then assert CS.
+    # --------------------------------------------------------
+
+    print("[OPENMV] Waiting 30 ms before SPI...")
+
+    pyb.delay(30)
+
+    # --------------------------------------------------------
+    # IMPORTANT:
+    #
+    # NuttX explicitly discards 1024 bytes before reading JPEG.
+    #
+    # Therefore OpenMV MUST send exactly 1024 zero bytes first.
+    # --------------------------------------------------------
+
+    print("[OPENMV][SPI] Sending 1024 sync bytes")
+
+    sync = bytes(SPI_SYNC_BYTES)
+
+    spi_send_bytes(sync)
+
+    # --------------------------------------------------------
+    # Send JPEG
+    # --------------------------------------------------------
+
+    jpeg_size = len(jpeg_bytes)
+
+    print("[OPENMV][SPI] Sending JPEG:", jpeg_size, "bytes")
+
+    offset = 0
+
+    while offset < jpeg_size:
+
+        end = offset + 256
+
+        if end > jpeg_size:
+            end = jpeg_size
+
+        chunk = jpeg_bytes[offset:end]
+
+        spi_send_bytes(chunk)
+
+        offset = end
+
+    print("[OPENMV][SPI] JPEG transfer complete")
+
+    print("========== SPI TRANSFER DONE ==========")
+    print("")
+
+
+# ============================================================
+# Main
+# ============================================================
+
+while True:
+
+    # --------------------------------------------------------
+    # 1. Handshake
+    # --------------------------------------------------------
+
+    wait_for_handshake()
+
+    # --------------------------------------------------------
+    # 2. Wait for capture command
+    # --------------------------------------------------------
+
+    wait_for_capture()
+
+    # --------------------------------------------------------
+    # 3. Capture JPEG
+    # --------------------------------------------------------
+
+    jpeg_data = capture_jpeg()
+
+    jpeg_size = len(jpeg_data)
+
+    # --------------------------------------------------------
+    # 4. Send UART information
+    #
+    # NuttX expects:
+    #
+    #   AA
+    #   size[0]
+    #   size[1]
+    #   size[2]
+    #   size[3]
+    #   meta_len[0]
+    #   meta_len[1]
+    #   "IMG_READY"
+    # --------------------------------------------------------
+
+    send_capture_info(jpeg_size)
+
+    # --------------------------------------------------------
+    # 5. SPI transfer
+    # --------------------------------------------------------
+
+    send_image_spi(jpeg_data)
+
+    print("[OPENMV] Capture cycle complete")
+
+    # Small delay before next command
+    pyb.delay(100)
+

@@ -30,9 +30,9 @@ extern struct spi_dev_s *stm32_spibus_initialize(int bus);
 /* ================================================================== */
 /*  Hardware                                                           */
 /* ================================================================== */
-#define UART_DEV   "/dev/ttyS1"
-#define SPI_BUS    3
-#define SPI_FREQ   4000000
+#define UART_DEV   "/dev/ttyS3"
+#define SPI_BUS    4
+#define SPI_FREQ   4000000433
 #define SPI_MODE   SPIDEV_MODE0
 
 /* ================================================================== */

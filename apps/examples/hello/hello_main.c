@@ -13,6 +13,9 @@
 int hello_main(int argc, char *argv[])
 {
   struct image_chunk_s chunk;
+  // /* Loop */
+  // for (int img_count = 0; img_count<5; img_count++)
+  // {
   int done = 0;
 
   while (!done)
@@ -37,6 +40,7 @@ int hello_main(int argc, char *argv[])
           done = 1;
         }
     }
+  // }
 
   return 0;
 }
