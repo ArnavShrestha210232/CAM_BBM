@@ -36,9 +36,9 @@ void rb_init(void)
 /*  Verilog: if (wr_en && !full) { mem[wr_ptr] <= wr_data;           */
 /*                                  wr_ptr <= wr_ptr + 1; count++ }  */
 /* ------------------------------------------------------------------ */
-int rb_write(const struct image_chunk_s *c)
+int rb_write(int cam_index,const struct image_chunk_s *c)
 {
-  if (!c) return -1;
+  if (cam_index<0 || cam_index >= NUM_CAMERAS) return -1;
 
   nxmutex_lock(&g_rb_lock);
 

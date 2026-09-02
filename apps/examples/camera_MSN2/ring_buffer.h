@@ -38,7 +38,7 @@ struct ring_buffer_s
   volatile uint32_t    wr_ptr;   /* ever-increasing write pointer */
   volatile uint32_t    rd_ptr;   /* ever-increasing read pointer  */
   volatile uint32_t    count;    /* current number of chunks held */
-};
+};`
 
 /* API */
 void rb_init  (void);
