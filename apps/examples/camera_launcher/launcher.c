@@ -9,8 +9,8 @@ int launcher_main(int argc, char *argv[])
 {
   printf("Starting camera + subscriber tasks...\n");
 
-  char *camera_argv[] = { NULL };
-  char *hello_argv[]  = { NULL };
+  char *camera_argv[] = { "Camera",NULL };
+  char *hello_argv[]  = { "hello","1",NULL };
 
   int cam_pid = task_create("camera", 100, 8192, camera_MSN2_main, camera_argv);
   if (cam_pid < 0)

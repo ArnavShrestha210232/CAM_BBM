@@ -1,111 +1,47 @@
-#include "ring_buffer.h"
-#include <string.h>
-#include <nuttx/mutex.h>
+#include "ring_buffer.h" 
+#include <string.h> 
 
-/*
- * ring_buffer.c
- *
- * Logic mirrors the Verilog CircularBuffer exactly:
- *
- *   Verilog                     C equivalent
- *   ──────────────────────────  ─────────────────────────────────
- *   wr_en && !full  → write     rb_write()  checks count < RB_DEPTH
- *   rd_en && !empty → read      rb_read()   checks count > 0
- *   wr_ptr <= wr_ptr + 1        g_rb.wr_ptr++ then % RB_DEPTH for slot
- *   rd_ptr <= rd_ptr + 1        g_rb.rd_ptr++ then % RB_DEPTH for slot
- *   count +1 / -1 / hold        count updated after every write/read
- *   full  = (count == DEPTH)    rb_full()
- *   empty = (count == 0)        rb_empty()
- */
+static struct image_chunk_s g_ring_buffer[NUM_CAMERAS][RING_BUF_LEN]; 
+static int g_head[NUM_CAMERAS]; 
+static int g_tail[NUM_CAMERAS]; 
 
-static struct ring_buffer_s g_rb;
-static mutex_t              g_rb_lock;
+void rb_init(void) 
+{ 
+  memset(g_head, 0, sizeof(g_head)); 
+  memset(g_tail, 0, sizeof(g_tail)); 
+  memset(g_ring_buffer, 0, sizeof(g_ring_buffer)); 
+} 
 
-/* ------------------------------------------------------------------ */
-void rb_init(void)
-{
-  memset(&g_rb, 0, sizeof(g_rb));
-  g_rb.wr_ptr = 0;
-  g_rb.rd_ptr = 0;
-  g_rb.count  = 0;
-  nxmutex_init(&g_rb_lock);
-}
+int rb_write(int cam_index, const struct image_chunk_s *c) 
+{ 
+  if (cam_index < 0 || cam_index >= NUM_CAMERAS) 
+  { 
+    return -1; 
+  } 
 
-/* ------------------------------------------------------------------ */
-/*  Write one chunk                                                    */
-/*  Verilog: if (wr_en && !full) { mem[wr_ptr] <= wr_data;           */
-/*                                  wr_ptr <= wr_ptr + 1; count++ }  */
-/* ------------------------------------------------------------------ */
-int rb_write(int cam_index,const struct image_chunk_s *c)
-{
-  if (cam_index<0 || cam_index >= NUM_CAMERAS) return -1;
+  int next = (g_head[cam_index] + 1) % RING_BUF_LEN; 
+  
+  if (next == g_tail[cam_index]) 
+  { 
+    return -1; /* Buffer full for this camera */ 
+  } 
+  memcpy(&g_ring_buffer[cam_index][g_head[cam_index]], c, sizeof(struct image_chunk_s)); 
+  g_head[cam_index] = next; 
+  return 0; 
+} 
 
-  nxmutex_lock(&g_rb_lock);
-
-  /* full check — mirrors: assign full = (count == DEPTH) */
-  if (g_rb.count >= RB_DEPTH)
-    {
-      nxmutex_unlock(&g_rb_lock);
-      return -1;   /* full — caller retries */
-    }
-
-  uint32_t slot = g_rb.wr_ptr % RB_DEPTH;           /* slot index      */
-  memcpy(&g_rb.slots[slot], c, sizeof(*c));
-  g_rb.wr_ptr++;                                     /* advance pointer */
-  g_rb.count++;                                      /* update count    */
-
-  nxmutex_unlock(&g_rb_lock);
-  return 0;
-}
-
-/* ------------------------------------------------------------------ */
-/*  Read one chunk                                                     */
-/*  Verilog: if (rd_en && !empty) { rd_data = mem[rd_ptr];           */
-/*                                   rd_ptr <= rd_ptr + 1; count-- } */
-/* ------------------------------------------------------------------ */
-int rb_read(struct image_chunk_s *c)
-{
-  if (!c) return -1;
-
-  nxmutex_lock(&g_rb_lock);
-
-  /* empty check — mirrors: assign empty = (count == 0) */
-  if (g_rb.count == 0)
-    {
-      nxmutex_unlock(&g_rb_lock);
-      return -1;   /* empty — caller retries */
-    }
-
-  uint32_t slot = g_rb.rd_ptr % RB_DEPTH;           /* slot index      */
-  memcpy(c, &g_rb.slots[slot], sizeof(*c));
-  g_rb.rd_ptr++;                                     /* advance pointer */
-  g_rb.count--;                                      /* update count    */
-
-  nxmutex_unlock(&g_rb_lock);
-  return 0;
-}
-
-/* ------------------------------------------------------------------ */
-int rb_count(void)
-{
-  nxmutex_lock(&g_rb_lock);
-  int n = (int)g_rb.count;
-  nxmutex_unlock(&g_rb_lock);
-  return n;
-}
-
-int rb_full(void)
-{
-  nxmutex_lock(&g_rb_lock);
-  int f = (g_rb.count >= RB_DEPTH) ? 1 : 0;
-  nxmutex_unlock(&g_rb_lock);
-  return f;
-}
-
-int rb_empty(void)
-{
-  nxmutex_lock(&g_rb_lock);
-  int e = (g_rb.count == 0) ? 1 : 0;
-  nxmutex_unlock(&g_rb_lock);
-  return e;
+int rb_read(int cam_index, struct image_chunk_s *c) 
+{ 
+  if (cam_index < 0 || cam_index >= NUM_CAMERAS)
+  { 
+    return -1; 
+  } 
+  if (g_head[cam_index] == g_tail[cam_index]) 
+  { 
+    return -1; /* Buffer empty for this camera */ 
+  } 
+  memcpy(c, &g_ring_buffer[cam_index][g_tail[cam_index]], sizeof(struct image_chunk_s)); 
+  g_tail[cam_index] = (g_tail[cam_index] + 1) % RING_BUF_LEN; 
+  
+  return 0; 
 }
